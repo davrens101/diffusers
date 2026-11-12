@@ -428,3 +428,13 @@ class UniPCMultistepScheduler1DTest(UniPCMultistepSchedulerTest):
         expected_timesteps = expected_timesteps[0:-1]
         self.assertTrue(torch.allclose(scheduler.sigmas, expected_sigmas))
         self.assertTrue(torch.all(expected_timesteps == scheduler.timesteps))
+
+    def test_flow_sigmas_list_converted(self):
+        # Regression test: passing `sigmas` as a plain list must not raise TypeError
+        # when `use_flow_sigmas=True` (sigmas must be converted to a numpy array).
+        config = self.get_scheduler_config(use_flow_sigmas=True)
+        scheduler = UniPCMultistepScheduler(**config)
+        sigmas = [1.0, 0.9, 0.8, 0.65, 0.5, 0.35, 0.2, 0.1]
+        scheduler.set_timesteps(sigmas=sigmas)
+        self.assertEqual(len(scheduler.timesteps), len(sigmas))
+        self.assertTrue(torch.all(scheduler.timesteps >= 0))
