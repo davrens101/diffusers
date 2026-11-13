@@ -238,6 +238,43 @@ class TestStableDiffusionImg2ImgPipeline(StableDiffusionImg2ImgPipelineTesterCon
 
     def test_inference_batch_single_identical(self):
         super().test_inference_batch_single_identical(expected_max_diff=3e-3)
+    def test_inference_batch_single_per_prompt_image_correct_order(self):
+        # Regression test for #15176: with one init image per prompt and
+        # num_images_per_prompt > 1, each output must start from its own prompt's
+        # image, not from another prompt's image. Prompt embeddings are ordered
+        # [a, a, b, b], so images must be interleaved per prompt ([a, a, b, b]),
+        # not concatenated ([a, b, a, b]).
+        sd_pipe = self.get_pipeline().to(torch_device)
+        sd_pipe.set_progress_bar_config(disable=True)
+
+        generator = torch.Generator(device=torch_device).manual_seed(0)
+        image_a = floats_tensor((1, 3, 32, 32), rng=random.Random(1)).to(torch_device) / 2 + 0.5
+        image_b = floats_tensor((1, 3, 32, 32), rng=random.Random(2)).to(torch_device) / 2 + 0.5
+        image = torch.cat([image_a, image_b], dim=0)
+        inputs = self.get_dummy_inputs()
+        inputs.update(
+            {
+                "prompt": ["a cat", "a dog"],
+                "image": image,
+                "num_images_per_prompt": 2,
+                "generator": [generator for _ in range(4)],
+                "num_inference_steps": 2,
+                "output_type": "pt",
+            }
+        )
+        batched = sd_pipe(**inputs).images
+        # expected order: (a, a), (a, a), (b, b), (b, b)
+        expected_image = [image_a, image_a, image_b, image_b]
+        for i in range(4):
+            own = sd_pipe(
+                inputs["prompt"][i // 2],
+                image=expected_image[i],
+                generator=torch.Generator(device=torch_device).manual_seed(i),
+                num_inference_steps=2,
+                output_type="pt",
+            ).images[0]
+            wrong = image_b if expected_image[i] is image_a else image_a
+            assert (batched[i] - own).abs().max() < (batched[i] - wrong).abs().max()
 
     def test_pipeline_interrupt(self):
         sd_pipe = self.get_pipeline().to(torch_device)
